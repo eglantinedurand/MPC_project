@@ -88,7 +88,7 @@ class MPCControl_xvel(MPCControl_base):
         self._dut_p = dut_p
 
         self.ocp = cp.Problem(cp.Minimize(cost), constraints)
-        
+
         # YOUR CODE HERE
         #################################################
 
