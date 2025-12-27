@@ -10,8 +10,8 @@ class MPCControl_roll(MPCControl_base):
     x_ids: np.ndarray = np.array([2, 5])
     u_ids: np.ndarray = np.array([3])
 
-    PAVG_MIN = 0.0
-    PAVG_MAX = 100.0
+    PAVG_MIN = 40
+    PAVG_MAX = 80
 
     def _setup_controller(self) -> None:
         #################################################

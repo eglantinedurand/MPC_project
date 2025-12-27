@@ -9,11 +9,9 @@ class MPCControl_zvel(MPCControl_base):
     x_ids: np.ndarray = np.array([8])
     u_ids: np.ndarray = np.array([2])
 
-    PAVG_MIN = 0
-    PAVG_MAX = 100
+    PAVG_MIN = 40
+    PAVG_MAX = 80
 
-    HOVER_BAND_LOW  = 10.0   # Pavg >= Pavg_trim - 10
-    HOVER_BAND_HIGH = 30.0   # Pavg <= Pavg_trim + 30
 
 
     def _setup_controller(self) -> None:
@@ -32,8 +30,8 @@ class MPCControl_zvel(MPCControl_base):
 
         # delta bounds for Pavg (absolute bounds + hover band)
         Pavg_s = float(self.us[0])
-        umin_abs = max(self.PAVG_MIN, Pavg_s - self.HOVER_BAND_LOW)
-        umax_abs = min(self.PAVG_MAX, Pavg_s + self.HOVER_BAND_HIGH)
+        umin_abs = max(self.PAVG_MIN, Pavg_s)
+        umax_abs = min(self.PAVG_MAX, Pavg_s)
 
         du_min = float(umin_abs - Pavg_s)
         du_max = float(umax_abs - Pavg_s)
