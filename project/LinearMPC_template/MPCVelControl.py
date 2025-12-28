@@ -70,6 +70,8 @@ class MPCVelControl:
                 u_target[self.mpc_x.u_ids],
             )
         )
+        print("u_x:", u0[self.mpc_x.u_ids])
+        
         u0[self.mpc_y.u_ids], x_traj[self.mpc_y.x_ids], u_traj[self.mpc_y.u_ids] = (
             self.mpc_y.get_u(
                 x0[self.mpc_y.x_ids],
@@ -77,6 +79,7 @@ class MPCVelControl:
                 u_target[self.mpc_y.u_ids],
             )
         )
+        print("u_y:", u0[self.mpc_y.u_ids])
         u0[self.mpc_z.u_ids], x_traj[self.mpc_z.x_ids], u_traj[self.mpc_z.u_ids] = (
             self.mpc_z.get_u(
                 x0[self.mpc_z.x_ids],
@@ -84,6 +87,7 @@ class MPCVelControl:
                 u_target[self.mpc_z.u_ids],
             )
         )
+        print("u_z:", u0[self.mpc_z.u_ids])
         (
             u0[self.mpc_roll.u_ids],
             x_traj[self.mpc_roll.x_ids],
@@ -93,5 +97,6 @@ class MPCVelControl:
             x_target[self.mpc_roll.x_ids],
             u_target[self.mpc_roll.u_ids],
         )
+        print("u_roll:", u0[self.mpc_roll.u_ids])
 
         return u0, x_traj, u_traj, t_traj
