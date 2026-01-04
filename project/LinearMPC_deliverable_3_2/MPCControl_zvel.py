@@ -83,8 +83,6 @@ class MPCControl_zvel(MPCControl_base):
         self._Xf = Xf
         Af, bf = Xf.A, Xf.b
 
-
-
         # decision variables
         dx = cp.Variable((nx, N + 1))
         du = cp.Variable((nu, N))
