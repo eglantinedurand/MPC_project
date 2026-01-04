@@ -1,6 +1,8 @@
 import numpy as np
 import cvxpy as cp
 from control import dlqr
+from mpt4py import Polyhedron
+from mpt4py.base import HData
 
 from .MPCControl_base import MPCControl_base
 
@@ -23,7 +25,7 @@ class MPCControl_yvel(MPCControl_base):
         # ---- tuning (start here) ----
         # State order: [ωx, α, vy]
         Q = np.diag([1.0, 50.0, 10.0])
-        R = np.diag([1.0])
+        R = np.diag([50.0])
         # -----------------------------
 
         # Terminal LQR cost (dlqr uses u = -Kx)
@@ -43,6 +45,62 @@ class MPCControl_yvel(MPCControl_base):
         dx_alpha_max = +alpha_max - alpha_s
         du_min = -delta1_max - delta1_s
         du_max = +delta1_max - delta1_s
+
+
+        omega_max = 5.0
+        vy_max = 10.0
+
+        Hx = np.array([
+            [ 1, 0, 0], [-1, 0, 0],     # omega_x
+            [ 0, 1, 0], [ 0,-1, 0],     # alpha
+            [ 0, 0, 1], [ 0, 0,-1],     # v_y
+        ], float)
+
+        hx = np.array([
+            omega_max, omega_max,
+            dx_alpha_max, -dx_alpha_min,
+            vy_max, vy_max
+        ], float)
+
+        Hu = np.array([[ 1.0],
+               [-1.0]], float)
+        hu = np.array([du_max, -du_min], float)     
+
+        # Build Polyhedra X and U
+        X = Polyhedron(HData(Hx, hx))
+        U = Polyhedron(HData(Hu, hu))
+
+        # terminal law u = -Kx (dlqr convention)
+        HK = -Hu @ K_lqr
+        XK = Polyhedron(HData(HK, hu))
+
+        X0 = X.intersect(XK)
+        self._X = X
+        self._U = U
+        self._XK = XK
+        self._X0 = X0
+
+        Acl = A - B @ K_lqr
+
+        def _equal_poly(P1: Polyhedron, P2: Polyhedron) -> bool:
+            try:
+                return P1.is_subset(P2) and P2.is_subset(P1)
+            except Exception:
+                return False
+
+        Xi = X0
+        for _ in range(100):
+            Ai, hi = Xi.A, Xi.b
+            PreXi = Polyhedron(HData(Ai @ Acl, hi))
+            Xnext = PreXi.intersect(X0)
+            if _equal_poly(Xnext, Xi):
+                Xi = Xnext
+                break
+            Xi = Xnext
+
+        Xf = Xi
+        self._Xf = Xf
+        Af, bf = Xf.A, Xf.b        
         # -----------------------------------------------
 
         # ---------- build QP in delta variables ----------
@@ -75,6 +133,8 @@ class MPCControl_yvel(MPCControl_base):
 
         # terminal cost
         cost += cp.quad_form(dx[:, N] - dxt_p, P)
+
+        constraints += [Af @ (dx[:, N] - dxt_p) <= bf]
 
         self._Q = Q
         self._R = R

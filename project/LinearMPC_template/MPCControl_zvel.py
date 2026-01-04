@@ -1,6 +1,8 @@
 import numpy as np
 import cvxpy as cp
 from control import dlqr
+from mpt4py import Polyhedron
+from mpt4py.base import HData
 
 from .MPCControl_base import MPCControl_base
 
@@ -30,11 +32,58 @@ class MPCControl_zvel(MPCControl_base):
 
         # delta bounds for Pavg (absolute bounds + hover band)
         Pavg_s = float(self.us[0])
-        umin_abs = max(self.PAVG_MIN, Pavg_s)
-        umax_abs = min(self.PAVG_MAX, Pavg_s)
+        du_min = self.PAVG_MIN - Pavg_s
+        du_max = self.PAVG_MAX - Pavg_s
 
-        du_min = float(umin_abs - Pavg_s)
-        du_max = float(umax_abs - Pavg_s)
+        vz_max = 15.0  # m/s loose bound for set computation
+
+        # X = { x | Hx x <= hx }  (x is DELTA vz here)
+        Hx = np.array([[1.0],
+                       [-1.0]], dtype=float)
+        hx = np.array([vz_max, vz_max], dtype=float)
+        # U = { u | Hu u <= hu }  (u is DELTA Pavg here)
+        Hu = np.array([[1.0],
+                       [-1.0]], dtype=float)
+        hu = np.array([du_max, -du_min], dtype=float)
+
+        # Build Polyhedra X and U
+        X = Polyhedron(HData(Hx, hx))
+        U = Polyhedron(HData(Hu, hu))
+
+        # terminal law u = -Kx (dlqr convention)
+        HK = -Hu @ K_lqr
+        XK = Polyhedron(HData(HK, hu))
+
+        X0 = X.intersect(XK)
+
+        self._X = X
+        self._U = U
+        self._XK = XK
+        self._X0 = X0
+
+        Acl = A - B @ K_lqr
+
+        def _equal_poly(P1: Polyhedron, P2: Polyhedron) -> bool:
+            try:
+                return P1.is_subset(P2) and P2.is_subset(P1)
+            except Exception:
+                return False
+
+        Xi = X0
+        for _ in range(100):
+            Ai, hi = Xi.A, Xi.b
+            PreXi = Polyhedron(HData(Ai @ Acl, hi))
+            Xnext = PreXi.intersect(X0)
+            if _equal_poly(Xnext, Xi):
+                Xi = Xnext
+                break
+            Xi = Xnext
+
+        Xf = Xi
+        self._Xf = Xf
+        Af, bf = Xf.A, Xf.b
+
+
 
         # decision variables
         dx = cp.Variable((nx, N + 1))
@@ -52,6 +101,9 @@ class MPCControl_zvel(MPCControl_base):
             constraints += [dx[:, k + 1] == A @ dx[:, k] + B @ du[:, k]]
             constraints += [du[0, k] <= du_max, du[0, k] >= du_min]
             cost += cp.quad_form(dx[:, k] - dxt_p, Q) + cp.quad_form(du[:, k] - dut_p, R)
+
+        constraints += [Af @ (dx[:, N] - dxt_p) <= bf]
+
 
         cost += cp.quad_form(dx[:, N] - dxt_p, P)
 

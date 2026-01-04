@@ -21,10 +21,11 @@ class MPCControl_xvel(MPCControl_base):
         B = self.B  # discrete subsystem (nx x nu)
         nx, nu, N = self.nx, self.nu, self.N
 
+
         # -------- tuning (start here) --------
         # State order: [ωy, β, vx]
-        Q = np.diag([1.0, 50.0, 10.0])
-        R = np.diag([1.0])
+        Q = np.diag([50.0, 100.0, 10.0])
+        R = np.diag([1000.0])
         # -------------------------------------
 
         # Terminal LQR cost
@@ -43,6 +44,68 @@ class MPCControl_xvel(MPCControl_base):
         dx_beta_max = +beta_max - beta_s
         du_min = -delta2_max - delta2_s
         du_max = +delta2_max - delta2_s
+
+        omega_max = 5.0   #rad/s
+        vx_max = 10.0  #m/s
+
+        Hx = np.array([
+            [ 1.0, 0.0, 0.0],   #  omega_y <= omega_max
+            [-1.0, 0.0, 0.0],   # -omega_y <= omega_max
+            [ 0.0, 1.0, 0.0],   #  beta    <= dx_beta_max
+            [ 0.0,-1.0, 0.0],   # -beta    <= -dx_beta_min
+            [ 0.0, 0.0, 1.0],   #  v_x     <= vx_max
+            [ 0.0, 0.0,-1.0],   # -v_x     <= vx_max
+        ], dtype=float)
+
+        hx = np.array([
+            omega_max,
+            omega_max,
+            dx_beta_max,
+            -dx_beta_min,
+            vx_max,
+            vx_max
+        ], dtype=float)
+
+        X = Polyhedron(HData(Hx, hx))
+        Hu = np.array([[ 1.0],
+                       [-1.0]], dtype=float)
+        hu = np.array([du_max, -du_min], dtype=float)
+        U = Polyhedron(HData(Hu, hu))
+
+        HK = -Hu @ K_lqr            # shape (2, nx)
+        hK = hu
+        XK = Polyhedron(HData(HK, hK))
+        print([n for n in dir(X) if n in ["H","A","h","b"]])
+
+        X0 = X.intersect(XK)
+        self._X = X
+        self._U = U
+        self._XK = XK
+        self._X0 = X0
+
+        Acl = A - B @ K_lqr
+        def _equal_poly(P1: Polyhedron, P2: Polyhedron) -> bool:
+            try:
+                return P1.is_subset(P2) and P2.is_subset(P1)
+            except Exception:
+                return False
+
+        Xi = X0
+        for _ in range(100):
+            Ai = Xi.A
+            hi = Xi.b
+            PreXi = Polyhedron(HData(Ai @ Acl, hi))   # {x | Acl x ∈ Xi}
+            Xnext = PreXi.intersect(X0)
+            if _equal_poly(Xnext, Xi):
+                Xi = Xnext
+                break
+            Xi = Xnext
+
+        Xf = Xi
+        self._Xf = Xf  
+        print([n for n in dir(Xi) if n in ["H","h","A","b"]])
+
+        Af, bf = Xf.A, Xf.b
 
         # ---------- build QP in delta variables ----------
         dx = cp.Variable((nx, N + 1))
@@ -73,6 +136,9 @@ class MPCControl_xvel(MPCControl_base):
         # terminal beta bounds (keep constraints at terminal)
         constraints += [dx[1, N] <= dx_beta_max]
         constraints += [dx[1, N] >= dx_beta_min]
+
+        # terminal constraints
+        constraints += [Af @ (dx[:, N] - dxt_p) <= bf]
 
         # terminal cost
         cost += cp.quad_form(dx[:, N] - dxt_p, P)
@@ -117,7 +183,7 @@ class MPCControl_xvel(MPCControl_base):
 
         if self.ocp.status not in ["optimal", "optimal_inaccurate"]:
             # fallback: local LQR in delta coords (keeps you moving)
-            du0 = (self._K @ dx0).reshape(-1)
+            du0 = (-self._K_lqr @ dx0).reshape(-1)
             u0 = self.us + du0
             return u0, np.tile(x0.reshape(-1, 1), (1, self.N + 1)), np.tile(u0.reshape(-1, 1), (1, self.N))
 
