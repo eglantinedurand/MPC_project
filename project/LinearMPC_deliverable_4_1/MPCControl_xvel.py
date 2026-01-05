@@ -24,8 +24,8 @@ class MPCControl_xvel(MPCControl_base):
 
         # -------- tuning (start here) --------
         # State order: [ωy, β, vx]
-        Q = np.diag([50.0, 100.0, 10.0])
-        R = np.diag([1000.0])
+        Q = np.diag([4.0, 8.0, 2.0])
+        R = np.diag([2.0])
         # -------------------------------------
 
         # Terminal LQR cost
