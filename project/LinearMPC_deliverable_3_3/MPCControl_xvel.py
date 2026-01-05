@@ -24,7 +24,7 @@ class MPCControl_xvel(MPCControl_base):
 
         # -------- tuning (start here) --------
         # State order: [ωy, β, vx]
-        Q = np.diag([50.0, 100.0, 10.0])
+        Q = np.diag([500.0, 500.0, 100.0])
         R = np.diag([1000.0])
         # -------------------------------------
 
@@ -44,6 +44,10 @@ class MPCControl_xvel(MPCControl_base):
         dx_beta_max = +beta_max - beta_s
         du_min = -delta2_max - delta2_s
         du_max = +delta2_max - delta2_s
+        print("delta2_s (trim) =", delta2_s)
+        print("du bounds =", du_min, du_max)
+        print("=> abs bounds =", delta2_s + du_min, delta2_s + du_max)
+
 
         omega_max = 5.0   #rad/s
         vx_max = 10.0  #m/s
@@ -178,20 +182,34 @@ class MPCControl_xvel(MPCControl_base):
         self._dxt_p.value = dxt
         self._dut_p.value = dut
 
+        delta2_max = np.deg2rad(float(self.DELTA2_MAX_DEG))
+
+        def saturate_u_abs(u_abs: np.ndarray) -> np.ndarray:
+            # u_abs is subsystem absolute input (shape (1,))
+            return np.clip(u_abs, -delta2_max, +delta2_max)
+
         # Solve
         self.ocp.solve(solver=cp.OSQP, warm_start=True)
-
         if self.ocp.status not in ["optimal", "optimal_inaccurate"]:
-            # fallback: local LQR in delta coords (keeps you moving)
             du0 = (-self._K_lqr @ dx0).reshape(-1)
-            u0 = self.us + du0
-            return u0, np.tile(x0.reshape(-1, 1), (1, self.N + 1)), np.tile(u0.reshape(-1, 1), (1, self.N))
+            u0 = self.us + du0                    # absolute
+            u0 = saturate_u_abs(u0)               # enforce delta2 bounds
+
+            return (
+                u0,
+                np.tile(x0.reshape(-1, 1), (1, self.N + 1)),
+                np.tile(u0.reshape(-1, 1), (1, self.N)),
+            )
+
 
         du_opt = np.array(self._du.value)
         dx_opt = np.array(self._dx.value)
 
         # Return ABSOLUTE trajectories for plotting/simulation consistency
         u_traj = self.us.reshape(-1, 1) + du_opt          # (1, N)
+        u_traj = np.clip(u_traj, -delta2_max, +delta2_max)
+        u0 = u_traj[:, 0]
+
         x_traj = self.xs.reshape(-1, 1) + dx_opt          # (3, N+1)
         u0 = u_traj[:, 0]
 
