@@ -25,7 +25,7 @@ class MPCControl_zvel(MPCControl_base):
         nx, nu, N = self.nx, self.nu, self.N   # nx=1, nu=1
 
         # Q,R must match nx=1, nu=1
-        Q = np.array([[50]])
+        Q = np.array([[30]])
         R = np.array([[1]])
 
         K_lqr, P, _ = dlqr(A, B, Q, R)
