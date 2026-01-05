@@ -25,7 +25,7 @@ class MPCControl_yvel(MPCControl_base):
         # ---- tuning (start here) ----
         # State order: [ωx, α, vy]
         Q = np.diag([1.0, 50.0, 10.0])
-        R = np.diag([50.0])
+        R = np.diag([100.0])
         # -----------------------------
 
         # Terminal LQR cost (dlqr uses u = -Kx)
