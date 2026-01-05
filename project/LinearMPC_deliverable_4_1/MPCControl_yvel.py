@@ -24,11 +24,8 @@ class MPCControl_yvel(MPCControl_base):
 
         # ---- tuning (start here) ----
         # State order: [ωx, α, vy]
-        # Q = np.diag([1.0, 50.0, 10.0])
-        # R = np.diag([100.0])
-
-        Q = np.diag([4.0, 8.0, 2.0])
-        R = np.diag([2.0])
+        Q = np.diag([1, 50.0, 10.0])
+        R = np.diag([50.0])
         # -----------------------------
 
         # Terminal LQR cost (dlqr uses u = -Kx)
@@ -176,23 +173,32 @@ class MPCControl_yvel(MPCControl_base):
         self.ocp.solve(solver=cp.OSQP, warm_start=True)
 
         if self.ocp.status not in ("optimal", "optimal_inaccurate"):
-            # fallback LQR in delta coords (u = -Kx)
             du0 = (-self._K_lqr @ dx0).reshape(-1)
             u0 = self.us + du0
+
+            delta1_max = np.deg2rad(float(self.DELTA1_MAX_DEG))
+            u0 = np.clip(u0, -delta1_max, +delta1_max)
+
             x_traj = np.tile(x0.reshape(-1, 1), (1, self.N + 1))
             u_traj = np.tile(u0.reshape(-1, 1), (1, self.N))
             return u0, x_traj, u_traj
 
+
         du_opt = np.array(self._du.value)
         dx_opt = np.array(self._dx.value)
 
+        # absolute trajectories
         u_traj = self.us.reshape(-1, 1) + du_opt
         x_traj = self.xs.reshape(-1, 1) + dx_opt
-        u0 = u_traj[:, 0]
 
+        # --- clip like xvel does (prevents d1 violation due to solver tolerance) ---
+        delta1_max = np.deg2rad(float(self.DELTA1_MAX_DEG))
+        u_traj = np.clip(u_traj, -delta1_max, +delta1_max)
+        # -------------------------------------------------------------------------
+
+        u0 = u_traj[:, 0]
         return u0, x_traj, u_traj
+
 
         # YOUR CODE HERE
         #################################################
-
-        return u0, x_traj, u_traj
