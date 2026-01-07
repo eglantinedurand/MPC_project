@@ -24,10 +24,10 @@ class MPCControl_z(MPCControl_base):
 
         # -------------------- TUNING --------------------
         # State is DELTA [vz, z]
-        Q = np.diag([79, 120])
-        R = np.array([[0.24]])
+        Q = np.diag([95, 201])
+        R = np.array([[0.1]])
 
-        # Strong terminal soft penalty (helps anchoring at target without hard z>=3)
+        # terminal penalty
         wT = 2e5
 
         # Disturbance bounds (given)
@@ -47,7 +47,7 @@ class MPCControl_z(MPCControl_base):
 
         E_ub = np.zeros(nx)
         M = np.eye(nx)
-        for _ in range(600):  # stable but close to 1 -> take enough terms
+        for _ in range(600):
             E_ub += np.abs(M) @ Bw_abs
             M = Acl_err @ M
         E_lb = -E_ub
@@ -66,8 +66,6 @@ class MPCControl_z(MPCControl_base):
         du_min = self.PAVG_MIN - us
         du_max = self.PAVG_MAX - us
 
-        # ke_min = min_{e in box} K_tube e
-        # ke_max = max_{e in box} K_tube e
         k = K_tube.reshape(1, -1)  # (1,2)
         k_pos = np.maximum(k, 0.0)
         k_neg = np.minimum(k, 0.0)
@@ -75,14 +73,11 @@ class MPCControl_z(MPCControl_base):
         ke_max = float((k_pos @ E_ub + k_neg @ E_lb).reshape(-1)[0])
 
         # CORRECT tube tightening:
-        # v_min = du_min - max(Ke), v_max = du_max - min(Ke)
         v_min_tight = du_min - ke_max
         v_max_tight = du_max - ke_min
 
         self.v_min_tight = float(v_min_tight)
         self.v_max_tight = float(v_max_tight)
-
-        # vertices of tightened input set in ABSOLUTE u (for deliverable printout)
         self.U_tight_vertices = np.array([us + v_min_tight, us + v_max_tight], dtype=float)
 
         # -------------------- Tighten z >= 0 (robust safety) --------------------
@@ -90,12 +85,11 @@ class MPCControl_z(MPCControl_base):
         # delta: z_s + Δz >= 0  -> Δz >= -z_s
         # robust: Δz_nom >= -z_s - min(e_z) = -z_s - E_lb[z]
         z_s = float(self.xs[1])
-        z_margin = 0.02
+        z_margin = 1
         z_min_tight = -z_s - float(E_lb[1]) + z_margin
         self.z_min_tight = float(z_min_tight)
 
-        # -------------------- Terminal set Xf (for deliverable + terminal constraint) --------------------
-        # Keep it reasonable; main anchoring will come from strong terminal penalty + terminal constraint.
+        # -------------------- Terminal set Xf --------------------
         vz_max = 3.0
         z_max = 3.0
 
@@ -147,10 +141,11 @@ class MPCControl_z(MPCControl_base):
         self._Xf = Xf
         Af, bf = Xf.A, Xf.b
 
-        # -------------------- OCP --------------------
+        # -------------------- OCP (nominal) --------------------
         dx = cp.Variable((nx, N + 1))  # nominal delta state
         dv = cp.Variable((nu, N))      # nominal delta input v
 
+        # NOTE: dx0_p is now the NOMINAL initial state (dx_bar), not measured dx0
         dx0_p = cp.Parameter(nx)
         dxt_p = cp.Parameter(nx)
         dut_p = cp.Parameter(nu)
@@ -158,7 +153,6 @@ class MPCControl_z(MPCControl_base):
         constraints = []
         cost = 0.0
 
-        # Force nominal initial state to measured delta state (prevents “nominal shifting”)
         constraints += [dx[:, 0] == dx0_p]
 
         for kstep in range(N):
@@ -195,6 +189,10 @@ class MPCControl_z(MPCControl_base):
 
         self.ocp = cp.Problem(cp.Minimize(cost), constraints)
 
+        # --- nominal state memory for tube MPC ---
+        # will be initialized properly in setup_estimator()
+        self.dx_bar = np.zeros(nx, dtype=float)
+
     def get_u(
         self, x0: np.ndarray, x_target: np.ndarray = None, u_target: np.ndarray = None
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -204,27 +202,17 @@ class MPCControl_z(MPCControl_base):
         if u_target is None:
             u_target = self.us
 
-
-
-
+        # measured deltas
         dx0 = x0 - self.xs
         dxt = x_target - self.xs
         dut = u_target - self.us
 
-        self._dx0_p.value = dx0
+        # IMPORTANT: OCP is solved around NOMINAL dx_bar, not measured dx0
+        self._dx0_p.value = self.dx_bar
         self._dxt_p.value = dxt
         self._dut_p.value = dut
 
         self.ocp.solve(solver=cp.OSQP, warm_start=True, verbose=False)
-
-        # print("\n=== MPC Z STEP DEBUG ===")
-        # print("dx0 =", dx0, " (Δz0=", dx0[1], ")")
-        # print("status =", self.ocp.status)
-        # if self.ocp.status in ("optimal", "optimal_inaccurate"):
-        #     print("dv0 =", float(self._dv.value[0,0]), " -> u_abs =", float(self.us[0] + self._dv.value[0,0]))
-        # else:
-        #     du_fb = float((self._K_tube @ dx0.reshape(self.nx, 1)).reshape(-1)[0])
-        #     print("FALLBACK tube du =", du_fb, " -> u_abs =", float(np.clip(self.us[0] + du_fb, self.PAVG_MIN, self.PAVG_MAX)))
 
         # fallback: tube feedback only (keep within absolute bounds)
         if self.ocp.status not in ("optimal", "optimal_inaccurate"):
@@ -239,23 +227,42 @@ class MPCControl_z(MPCControl_base):
         dv_opt = np.array(self._dv.value, dtype=float)  # (1,N)
         dx_opt = np.array(self._dx.value, dtype=float)  # (2,N+1)
 
-        # Since dx[:,0]==dx0, tube correction at k=0 is zero -> apply u = us + v0
-        du0 = float(dv_opt[0, 0])
-        u0_abs = float(self.us[0]) + du0
+        # nominal first move
+        v0 = float(dv_opt[0, 0])
+
+        # update nominal state memory (one-step nominal propagation)
+        # dx_bar(k+1) = A dx_bar(k) + B v0
+        self.dx_bar = (self.A @ self.dx_bar + (self.B.flatten() * v0)).astype(float)
+
+        # tube correction uses measured error (dx0 - dx_bar_current)
+        # use updated dx_bar? better use "pre-update" for correction at current step:
+        # so compute correction with dx_bar_before = (value used in OCP), i.e. dx_opt[:,0]
+        dx_bar_before = dx_opt[:, 0].reshape(-1)
+        tube_corr = float((self._K_tube @ (dx0 - dx_bar_before).reshape(self.nx, 1)).reshape(-1)[0])
+
+        u0_abs = float(self.us[0]) + v0 + tube_corr
         u0_abs = float(np.clip(u0_abs, self.PAVG_MIN, self.PAVG_MAX))
         u0 = np.array([u0_abs], dtype=float)
 
-        # For plotting (absolute)
+        # For plotting (absolute nominal trajectory, not the real one)
         u_traj = self.us.reshape(-1, 1) + dv_opt
         x_traj = self.xs.reshape(-1, 1) + dx_opt
         u_traj = np.clip(u_traj, self.PAVG_MIN, self.PAVG_MAX)
+
+        
 
         return u0, x_traj, u_traj
 
     # keep template API
     def setup_estimator(self):
-        self.d_estimate = np.zeros((1,))
-        self.d_gain = 0.0
+        # initialize nominal state to the current measured delta at first call
+        self.dx_bar = np.zeros((self.nx,), dtype=float)
+        self._dx_bar_initialized = False
 
     def update_estimator(self, x_data: np.ndarray, u_data: np.ndarray) -> None:
-        self.d_estimate = self.d_estimate
+        # x_data is the ABSOLUTE reduced state [vz, z] for this subsystem
+        dx_meas = x_data - self.xs
+        if not getattr(self, "_dx_bar_initialized", False):
+            self.dx_bar = dx_meas.astype(float).copy()
+            self._dx_bar_initialized = True
+
