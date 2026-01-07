@@ -24,8 +24,8 @@ class MPCControl_z(MPCControl_base):
 
         # -------------------- TUNING --------------------
         # State is DELTA [vz, z]
-        Q = np.diag([20.0, 50])
-        R = np.array([[8]])
+        Q = np.diag([79, 120])
+        R = np.array([[0.24]])
 
         # Strong terminal soft penalty (helps anchoring at target without hard z>=3)
         wT = 2e5
@@ -204,6 +204,9 @@ class MPCControl_z(MPCControl_base):
         if u_target is None:
             u_target = self.us
 
+
+
+
         dx0 = x0 - self.xs
         dxt = x_target - self.xs
         dut = u_target - self.us
@@ -213,6 +216,15 @@ class MPCControl_z(MPCControl_base):
         self._dut_p.value = dut
 
         self.ocp.solve(solver=cp.OSQP, warm_start=True, verbose=False)
+
+        # print("\n=== MPC Z STEP DEBUG ===")
+        # print("dx0 =", dx0, " (Δz0=", dx0[1], ")")
+        # print("status =", self.ocp.status)
+        # if self.ocp.status in ("optimal", "optimal_inaccurate"):
+        #     print("dv0 =", float(self._dv.value[0,0]), " -> u_abs =", float(self.us[0] + self._dv.value[0,0]))
+        # else:
+        #     du_fb = float((self._K_tube @ dx0.reshape(self.nx, 1)).reshape(-1)[0])
+        #     print("FALLBACK tube du =", du_fb, " -> u_abs =", float(np.clip(self.us[0] + du_fb, self.PAVG_MIN, self.PAVG_MAX)))
 
         # fallback: tube feedback only (keep within absolute bounds)
         if self.ocp.status not in ("optimal", "optimal_inaccurate"):
