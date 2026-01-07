@@ -24,11 +24,25 @@ class MPCControl_z(MPCControl_base):
 
         # -------------------- TUNING --------------------
         # State is DELTA [vz, z]
-        Q = np.diag([95, 201])
+
+        #first value for which both work and is fastest
+        Q = np.diag([190,200])
         R = np.array([[0.1]])
 
+        # random noise is optimised
+        # Q = np.diag([95, 200])
+        # R = np.array([[0.1]])
+
+        # extrem disturbance is optimised
+        # Q = np.diag([350, 200])
+        # R = np.array([[0.1]])
+
+        # no noise is optimised
+        #Q = np.diag([40, 200])
+        #R = np.array([[0.1]])
+
         # terminal penalty
-        wT = 2e5
+        wT = 2e10
 
         # Disturbance bounds (given)
         w_min, w_max = -15.0, 5.0
@@ -85,7 +99,7 @@ class MPCControl_z(MPCControl_base):
         # delta: z_s + Δz >= 0  -> Δz >= -z_s
         # robust: Δz_nom >= -z_s - min(e_z) = -z_s - E_lb[z]
         z_s = float(self.xs[1])
-        z_margin = 1
+        z_margin = 0.2
         z_min_tight = -z_s - float(E_lb[1]) + z_margin
         self.z_min_tight = float(z_min_tight)
 
@@ -249,20 +263,38 @@ class MPCControl_z(MPCControl_base):
         x_traj = self.xs.reshape(-1, 1) + dx_opt
         u_traj = np.clip(u_traj, self.PAVG_MIN, self.PAVG_MAX)
 
-        
-
         return u0, x_traj, u_traj
 
     # keep template API
     def setup_estimator(self):
-        # initialize nominal state to the current measured delta at first call
-        self.dx_bar = np.zeros((self.nx,), dtype=float)
-        self._dx_bar_initialized = False
+        self.w_hat = 0.0
+        self.w_min, self.w_max = -15.0, 5.0   # known bounds
+        self.alpha = 0.2                      # smoothing
+        self._dx_prev = None
+        self._du_prev = None
+
 
     def update_estimator(self, x_data: np.ndarray, u_data: np.ndarray) -> None:
-        # x_data is the ABSOLUTE reduced state [vz, z] for this subsystem
-        dx_meas = x_data - self.xs
-        if not getattr(self, "_dx_bar_initialized", False):
-            self.dx_bar = dx_meas.astype(float).copy()
-            self._dx_bar_initialized = True
+        # x_data is ABSOLUTE reduced state [vz, z] for sys_z
+        dx = x_data - self.xs
+        du = float(u_data[0] - self.us[0])
+
+        if self._dx_prev is None:
+            self._dx_prev = dx.copy()
+            self._du_prev = du
+            return
+
+        # residual: dx(k) - (A dx(k-1) + B du(k-1)) = B*w
+        resid = dx - (self.A @ self._dx_prev + self.B.flatten() * self._du_prev)
+
+        b = self.B.flatten()
+        w_raw = float((b @ resid) / (b @ b + 1e-9))
+        w_raw = float(np.clip(w_raw, self.w_min, self.w_max))
+
+        # smooth
+        self.w_hat = (1 - self.alpha) * self.w_hat + self.alpha * w_raw
+
+        self._dx_prev = dx.copy()
+        self._du_prev = du
+
 
