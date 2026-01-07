@@ -42,7 +42,7 @@ class MPCControl_z(MPCControl_base):
         #R = np.array([[0.1]])
 
         # terminal penalty
-        wT = 2e10
+        wT = 2e5
 
         # Disturbance bounds (given)
         w_min, w_max = -15.0, 5.0
