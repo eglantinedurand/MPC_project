@@ -46,7 +46,18 @@ class MPCControl_z(MPCControl_base):
         self.N = N
 
         # ----- Costs -----
-        Q = np.diag([200.0, 200.0])  # [vz, z]
+
+        #All 3 noise scenarious have a solution, but none of the stabelizes under 4 seconds
+        #Q = np.diag([156.0, 200.0])  # [vz, z]
+        #R = np.array([[0.1]])
+
+
+        #best for random  but infeasable for extreme. 
+        # Q = np.diag([85, 200.0])  # [vz, z]
+        # R = np.array([[0.1]])
+
+        #best for extrem . 
+        Q = np.diag([325, 200.0])  # [vz, z]
         R = np.array([[0.1]])
 
         # ----- Disturbance bounds (given) -----
@@ -114,8 +125,8 @@ class MPCControl_z(MPCControl_base):
         self.z_min_tight = float(z_min_tight)
 
         # ----- Terminal set Xf (loose box + maximal invariant subset) -----
-        vz_max = 12.0
-        z_max = 30.0
+        vz_max = 5
+        z_max = 15
 
         Hx = np.array([[1, 0], [-1, 0], [0, 1], [0, -1]], dtype=float)
         hx = np.array([vz_max, vz_max, z_max, -z_min_tight], dtype=float)
@@ -201,11 +212,6 @@ class MPCControl_z(MPCControl_base):
         self._x_prev = None
         self._u_prev = None
 
-        # Debug (optional)
-        print("N:", self.N,
-              "dv_tight:", self.dv_min_tight, self.dv_max_tight,
-              "du_bounds:", self.du_min, self.du_max,
-              "z_min_tight:", self.z_min_tight)
 
     def _update_w_estimator(self, x_now: np.ndarray) -> None:
         """
@@ -308,8 +314,6 @@ class MPCControl_z(MPCControl_base):
         x_traj = self.xs.reshape(-1, 1) + dx_opt
         u_traj = self.us.reshape(-1, 1) + dv_opt
         u_traj = np.clip(u_traj, self.PAVG_MIN, self.PAVG_MAX)
-
-        print("z=", x0[1], "vz=", x0[0], "u=", u0_abs, "w_hat=", self.w_hat, "dv0=", dv0, "tube=", tube_corr)
 
 
         return u0, x_traj, u_traj
